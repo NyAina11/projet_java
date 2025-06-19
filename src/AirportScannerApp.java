@@ -10,70 +10,78 @@ public class AirportScannerApp {
 
     public static void main(String[] args) {
         // Le fichier à scanner est passé en argument, ou défini ici
-        String fichierVols = "vols_a_scanner.txt";
-        scannerFichierVols(fichierVols);
+        String fichierPassagers = "passagers_a_scanner.txt";
+        scannerFichierPassagers(fichierPassagers);
     }
 
-    public static void scannerFichierVols(String cheminFichier) {
-        // Try-with-resources pour s'assurer que les ressources sont bien fermées
-        try (BufferedReader br = new BufferedReader(new FileReader(cheminFichier));
-             Connection conn = Database.connect()) {
+    public static void scannerFichierPassagers(String cheminFichier) {
+        // La première ligne du fichier est l'en-tête
+        String header = "";
+
+        try (Connection conn = Database.connect();
+             BufferedReader br = new BufferedReader(new FileReader(cheminFichier))) {
 
             if (conn == null) {
-                System.out.println("Impossible de se connecter à la base de données.");
+                System.err.println("Échec de la connexion à la base de données.");
+                return;
+            }
+
+            // Lire et ignorer l'en-tête
+            header = br.readLine();
+            if (header == null) {
+                System.err.println("Le fichier de passagers est vide.");
                 return;
             }
 
             String ligne;
-            br.readLine(); // Ignorer la première ligne (l'en-tête)
-
             while ((ligne = br.readLine()) != null) {
                 String[] champs = ligne.split(",");
-                String numeroVol = champs[0];
+                if (champs.length < 4) {
+                    System.err.println("Ligne mal formée, ignorée : " + ligne);
+                    continue; // Passe à la ligne suivante
+                }
+
+                String nomPassager = champs[0];
                 String aeroportDepart = champs[1];
                 String aeroportArrivee = champs[2];
                 String dateVol = champs[3];
 
                 System.out.println("==============================================");
-                System.out.printf("SCAN pour le vol %s (%s -> %s) le %s\n", numeroVol, aeroportDepart, aeroportArrivee, dateVol);
+                System.out.printf("SCAN pour : %s | Vol : %s -> %s | Date : %s\n",
+                        nomPassager, aeroportDepart, aeroportArrivee, dateVol);
 
-                // On cherche les NOTAM pertinents pour le départ et l'arrivée
-                chercherNotamsPourVol(conn, aeroportDepart, dateVol);
-                chercherNotamsPourVol(conn, aeroportArrivee, dateVol);
+                // Chercher les NOTAM pour le départ et l'arrivée
+                chercherNotamsPourAeroport(conn, aeroportDepart, dateVol, "Départ");
+                chercherNotamsPourAeroport(conn, aeroportArrivee, dateVol, "Arrivée");
             }
 
-        } catch (IOException e) {
-            System.err.println("Erreur lors de la lecture du fichier : " + cheminFichier);
-            e.printStackTrace();
-        } catch (SQLException e) {
-            System.err.println("Erreur SQL.");
-            e.printStackTrace();
+        } catch (IOException | SQLException e) {
+            System.err.println("Erreur de lecture du fichier : " + e.getMessage());
         }
     }
 
-    private static void chercherNotamsPourVol(Connection conn, String codeIcao, String dateVol) throws SQLException {
-        // Requête SQL pour trouver les NOTAM actifs pour un aéroport donné à une date donnée
+    private static void chercherNotamsPourAeroport(Connection conn, String codeIcao, String dateVol, String type) {
+        System.out.printf("--- NOTAMs pour l'aéroport de %s (%s) ---\n", type, codeIcao);
         String sql = "SELECT code_notam, message FROM notams WHERE code_icao = ? AND date_debut <= ? AND date_fin >= ?";
 
         try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setString(1, codeIcao); // Définit le code OACI de l'aéroport
-            pstmt.setString(2, dateVol);  // Définit la date du vol
-            pstmt.setString(3, dateVol);  // Définit la date du vol
+            pstmt.setString(1, codeIcao);
+            pstmt.setString(2, dateVol);
+            pstmt.setString(3, dateVol);
 
             ResultSet rs = pstmt.executeQuery();
 
             boolean found = false;
             while (rs.next()) {
-                if (!found) {
-                    System.out.printf("--- NOTAMs trouvés pour l'aéroport %s ---\n", codeIcao);
-                    found = true;
-                }
                 System.out.printf("  -> [%s]: %s\n", rs.getString("code_notam"), rs.getString("message"));
+                found = true;
             }
 
             if (!found) {
-                System.out.printf("--- Aucun NOTAM actif trouvé pour %s à cette date ---\n", codeIcao);
+                System.out.printf("  -> Aucun NOTAM actif trouvé pour %s à cette date.\n", codeIcao);
             }
+        } catch (SQLException e) {
+            System.err.println("Erreur SQL lors de la recherche de NOTAMs pour " + codeIcao + ": " + e.getMessage());
         }
     }
 }
